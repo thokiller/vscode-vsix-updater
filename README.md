@@ -53,7 +53,8 @@ for you):
 {
   "sources": [
     "owner/repo",
-    { "repo": "owner/other", "asset": "other-windows.vsix" }
+    { "repo": "owner/other", "asset": "other-windows.vsix" },
+    { "repo": "owner/private", "token": "ghp_..." }
   ],
   "token": "",
   "checkOnStartup": true,
@@ -63,10 +64,13 @@ for you):
 
 - `sources` - repositories to watch. Plain `"owner/repo"` strings are enough.
   Use the object form with `"asset"` only when a release contains more than one
-  `.vsix` file, to name exactly which one to install.
-- `token` - optional GitHub personal access token, needed for private
-  repositories (give it read-only access to those repositories and nothing
-  more). It also raises the API rate limit for public repositories.
+  `.vsix` file, to name exactly which one to install, and with `"token"` to use
+  a specific token for that repository only. Only github.com repositories are
+  supported; anything else is rejected with a clear error.
+- `token` - optional GitHub personal access token used for every source that
+  does not set its own `"token"`, needed for private repositories (give it
+  read-only access to those repositories and nothing more). It also raises the
+  API rate limit for public repositories.
 - `checkOnStartup` - check once shortly after VS Code starts (default `true`).
 - `periodicCheckHours` - also check every N hours while VS Code is running.
   `0` (the default) disables periodic checks.
@@ -75,12 +79,12 @@ Changes are picked up when you save the file; no restart needed.
 
 ### Token safety
 
-The token is stored as plain text in this file, so:
+Tokens are stored as plain text in this file, so:
 
-- use a fine-grained token restricted to the private repositories it needs,
+- use fine-grained tokens restricted to the private repositories they need,
   with read-only contents access;
 - never share, screenshot, or commit the file;
-- the extension only ever sends the token to `api.github.com` and never logs it.
+- the extension only ever sends tokens to `api.github.com` and never logs them.
 
 ## Self-updating
 

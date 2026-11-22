@@ -43,10 +43,24 @@ test('validateConfig normalizes sources, flags duplicates and bad entries', () =
     ]
   });
   assert.deepStrictEqual(config.sources, [
-    { repo: 'owner/repo', asset: '' },
-    { repo: 'other/thing', asset: 'thing-windows.vsix' }
+    { repo: 'owner/repo', asset: '', token: '' },
+    { repo: 'other/thing', asset: 'thing-windows.vsix', token: '' }
   ]);
   assert.strictEqual(errors.length, 4);
+});
+
+test('validateConfig accepts a per-source token and rejects bad ones', () => {
+  const { config, errors } = validateConfig({
+    sources: [
+      { repo: 'a/private', token: ' ghp_source ' },
+      { repo: 'b/broken', token: 5 }
+    ],
+    token: 'ghp_global'
+  });
+  assert.deepStrictEqual(config.sources, [{ repo: 'a/private', asset: '', token: 'ghp_source' }]);
+  assert.strictEqual(config.token, 'ghp_global');
+  assert.strictEqual(errors.length, 1);
+  assert.match(errors[0], /sources\[1\].*token/);
 });
 
 test('validateConfig reports wrong types without dropping the rest', () => {
@@ -57,7 +71,7 @@ test('validateConfig reports wrong types without dropping the rest', () => {
     periodicCheckHours: -4,
     extra: true
   });
-  assert.deepStrictEqual(config.sources, [{ repo: 'a/b', asset: '' }]);
+  assert.deepStrictEqual(config.sources, [{ repo: 'a/b', asset: '', token: '' }]);
   assert.strictEqual(config.token, '');
   assert.strictEqual(config.checkOnStartup, true);
   assert.strictEqual(config.periodicCheckHours, 0);
@@ -83,7 +97,7 @@ test('loadConfig handles missing, invalid, and valid files', async () => {
     const valid = await loadConfig(configPath);
     assert.deepStrictEqual(valid.errors, []);
     assert.deepStrictEqual(valid.config, {
-      sources: [{ repo: 'a/b', asset: '' }],
+      sources: [{ repo: 'a/b', asset: '', token: '' }],
       token: 't',
       checkOnStartup: true,
       periodicCheckHours: 2

@@ -18,7 +18,12 @@ const DEFAULT_STARTUP_DELAY_MS = 10000;
 function activate(context) {
   const output = vscode.window.createOutputChannel('VSIX Updater');
   context.subscriptions.push(output);
-  const log = (message) => output.appendLine(`[${new Date().toISOString()}] ${message}`);
+  const recentLog = [];
+  const log = (message) => {
+    output.appendLine(`[${new Date().toISOString()}] ${message}`);
+    recentLog.push(message);
+    if (recentLog.length > 200) recentLog.shift();
+  };
 
   const configPath = path.join(context.globalStorageUri.fsPath, CONFIG_FILE_NAME);
   const selfRepo = parseRepositoryField(context.extension.packageJSON.repository);
@@ -50,8 +55,30 @@ function activate(context) {
     return extension ? extension.packageJSON.version : undefined;
   }
 
-  function getSkips() { return context.globalState.get(SKIPS_KEY, {}); }
-  function getReminders() { return context.globalState.get(REMINDERS_KEY, {}); }
+  // Skips and reminders are authoritative in memory for this session;
+  // globalState only persists them across sessions. Reading globalState right
+  // after an update can return stale data (storage sync races), so never rely
+  // on read-after-write.
+  let skips = context.globalState.get(SKIPS_KEY, {});
+  let reminders = context.globalState.get(REMINDERS_KEY, {});
+
+  async function saveSkips(next) {
+    skips = next;
+    try {
+      await context.globalState.update(SKIPS_KEY, next);
+    } catch (error) {
+      log(`Could not persist skipped versions: ${error.message}`);
+    }
+  }
+
+  async function saveReminders(next) {
+    reminders = next;
+    try {
+      await context.globalState.update(REMINDERS_KEY, next);
+    } catch (error) {
+      log(`Could not persist reminders: ${error.message}`);
+    }
+  }
 
   async function readConfigForUse({ manual }) {
     const result = await loadConfig(configPath);
@@ -92,7 +119,7 @@ function activate(context) {
           await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(tempPath));
         }
       );
-      await context.globalState.update(REMINDERS_KEY, state.clearReminder(getReminders(), update.repo));
+      await saveReminders(state.clearReminder(reminders, update.repo));
       log(`Installed ${update.id} ${update.availableVersion} from ${update.repo}.`);
       const choice = await notifier(`Installed ${label}. Reload the window to activate it.`, ['Reload Window']);
       if (choice === 'Reload Window') await vscode.commands.executeCommand('workbench.action.reloadWindow');
@@ -109,10 +136,9 @@ function activate(context) {
   async function promptUpdate(update, client) {
     const key = `${update.repo.toLowerCase()}@${update.availableVersion}`;
     notifiedThisSession.add(key);
-    const reminders = getReminders();
     const entry = reminders[update.repo.toLowerCase()];
     if (entry && entry.version === update.availableVersion && Date.now() >= entry.remindAfter) {
-      await context.globalState.update(REMINDERS_KEY, state.clearReminder(reminders, update.repo));
+      await saveReminders(state.clearReminder(reminders, update.repo));
     }
     const installing = update.installedVersion === undefined;
     const action = installing ? 'Install' : 'Update';
@@ -124,11 +150,11 @@ function activate(context) {
       if (choice === action) {
         await installUpdate(update, client);
       } else if (choice === 'Remind Me Tomorrow') {
-        await context.globalState.update(REMINDERS_KEY, state.setReminder(getReminders(), update.repo, update.availableVersion, Date.now()));
+        await saveReminders(state.setReminder(reminders, update.repo, update.availableVersion, Date.now()));
         log(`${update.repo}: reminding about ${update.availableVersion} tomorrow.`);
         scheduleReminderTimer();
       } else if (choice === 'Skip This Version') {
-        await context.globalState.update(SKIPS_KEY, state.addSkip(getSkips(), update.repo, update.availableVersion));
+        await saveSkips(state.addSkip(skips, update.repo, update.availableVersion));
         log(`${update.repo}: version ${update.availableVersion} skipped.`);
       } else if (choice === 'Release Notes') {
         if (update.releaseUrl) await vscode.env.openExternal(vscode.Uri.parse(update.releaseUrl));
@@ -160,17 +186,18 @@ function activate(context) {
         return { results: [] };
       }
       const apiBase = process.env.VSIX_UPDATER_API_BASE || DEFAULT_API_BASE;
-      const client = new GitHubClient({ apiBase, token: config.token });
       log(`Checking ${sourceList.length} source(s)${manual ? ' (manual)' : ''}...`);
       const results = [];
+      const clients = new Map();
       for (const source of sourceList) {
+        // A per-source token overrides the top-level one.
+        const client = new GitHubClient({ apiBase, token: source.token || config.token });
+        clients.set(source.repo.toLowerCase(), client);
         results.push(await checkSource(client, source, { getInstalledVersion }));
       }
       const errors = results.filter((result) => result.status === 'error');
       for (const result of errors) log(`Check failed: ${result.error}`);
       const offers = [];
-      const skips = getSkips();
-      const reminders = getReminders();
       const now = Date.now();
       for (const result of results) {
         if (result.status !== 'install' && result.status !== 'update') continue;
@@ -192,10 +219,10 @@ function activate(context) {
         }
       }
       // Sequential prompts, one notification each, never a modal queue.
-      for (const update of offers) await promptUpdate(update, client);
+      for (const update of offers) await promptUpdate(update, clients.get(update.repo.toLowerCase()));
       return { results };
     } catch (error) {
-      log(`Check failed unexpectedly: ${error.message}`);
+      log(`Check failed unexpectedly: ${error.stack || error.message}`);
       if (manual) vscode.window.showErrorMessage(`VSIX Updater check failed: ${error.message}`);
       return { results: [] };
     } finally {
@@ -248,7 +275,7 @@ function activate(context) {
   // reminders work even with periodic checks disabled.
   function scheduleReminderTimer() {
     if (reminderTimer) { clearTimeout(reminderTimer); reminderTimer = null; }
-    const times = Object.values(getReminders())
+    const times = Object.values(reminders)
       .map((entry) => entry && entry.remindAfter)
       .filter((time) => typeof time === 'number');
     if (times.length === 0) return;
@@ -285,7 +312,7 @@ function activate(context) {
     for (const error of result.errors) log(`Configuration: ${error}`);
     schedulePeriodic(result.config);
     scheduleReminderTimer();
-    const dueReminders = state.getDueReminders(getReminders(), Date.now()).length > 0;
+    const dueReminders = state.getDueReminders(reminders, Date.now()).length > 0;
     if (result.config.checkOnStartup || dueReminders) {
       const delay = process.env.VSIX_UPDATER_STARTUP_DELAY_MS !== undefined
         ? Number(process.env.VSIX_UPDATER_STARTUP_DELAY_MS)
@@ -300,11 +327,12 @@ function activate(context) {
         runCheck,
         setNotifier: (fn) => { notifier = fn; },
         getConfigPath: () => configPath,
-        getState: () => ({ skips: getSkips(), reminders: getReminders() }),
+        getState: () => ({ skips, reminders }),
+        getLog: () => [...recentLog],
         resetSession: () => notifiedThisSession.clear(),
         clearState: async () => {
-          await context.globalState.update(SKIPS_KEY, undefined);
-          await context.globalState.update(REMINDERS_KEY, undefined);
+          await saveSkips({});
+          await saveReminders({});
           notifiedThisSession.clear();
         }
       }

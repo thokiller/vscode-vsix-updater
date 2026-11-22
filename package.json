@@ -2,7 +2,7 @@
   "name": "vsix-updater",
   "displayName": "VSIX Updater",
   "description": "Installs and updates sideloaded VSIX extensions from GitHub releases, with user approval.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "local",
   "license": "GPL-2.0-only",
   "private": true,

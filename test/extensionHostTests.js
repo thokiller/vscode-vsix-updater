@@ -30,7 +30,16 @@ async function run() {
   const api = await extension.activate();
   assert.ok(api && api._test, 'test API not exposed');
   const testApi = api._test;
+  try {
+    await runScenarios(testApi, extension);
+  } catch (error) {
+    // Surface the extension's internal log so failures are diagnosable in CI.
+    console.log('[itest] extension log:\n' + testApi.getLog().map((line) => '  | ' + line).join('\n'));
+    throw error;
+  }
+}
 
+async function runScenarios(testApi, extension) {
   const fake = await startFakeGitHub();
   try {
     process.env.VSIX_UPDATER_API_BASE = fake.baseUrl;
