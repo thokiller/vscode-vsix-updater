@@ -1,0 +1,10 @@
+.git/**
+.gitignore
+.github/**
+.vscode/**
+.vscode-test/**
+test/**
+build-vsix.cmd
+*.vsix
+.release-artifacts/**
+node_modules/@vscode/test-electron/**
