@@ -56,8 +56,10 @@ async function run() {
     let answer = () => undefined;
     testApi.setNotifier(async (message, buttons) => {
       prompts.push({ message, buttons });
+      console.log(`[itest] notification: ${message} [${buttons.join(', ')}]`);
       return answer(message, buttons);
     });
+    const promptSummary = () => JSON.stringify(prompts.map((prompt) => prompt.message));
 
     // Scenario A: missing extension is offered and installed on approval.
     answer = (message, buttons) => (buttons.includes('Install') ? 'Install' : undefined);
@@ -82,7 +84,7 @@ async function run() {
     prompts.length = 0;
     answer = () => undefined;
     await testApi.runCheck({ manual: false });
-    assert.strictEqual(prompts.length, 0, 'skipped version must not re-prompt automatically');
+    assert.strictEqual(prompts.length, 0, 'skipped version must not re-prompt automatically, got ' + promptSummary());
 
     prompts.length = 0;
     await testApi.runCheck({ manual: true });
@@ -95,7 +97,7 @@ async function run() {
     prompts.length = 0;
     answer = (message, buttons) => (buttons.includes('Remind Me Tomorrow') && !buttons.includes('Reload Window') ? 'Remind Me Tomorrow' : undefined);
     await testApi.runCheck({ manual: false });
-    assert.strictEqual(prompts.length, 1, 'expected one offer before the reminder');
+    assert.strictEqual(prompts.length, 1, 'expected one offer before the reminder, got ' + promptSummary());
     const reminder = Object.values(testApi.getState().reminders)[0];
     assert.ok(reminder && reminder.version === '1.2.0' && reminder.remindAfter > Date.now(), 'reminder was not persisted');
 
@@ -103,18 +105,18 @@ async function run() {
     prompts.length = 0;
     answer = () => undefined;
     await testApi.runCheck({ manual: false });
-    assert.strictEqual(prompts.length, 0, 'reminded version must not re-prompt the same day');
+    assert.strictEqual(prompts.length, 0, 'reminded version must not re-prompt the same day, got ' + promptSummary());
 
     prompts.length = 0;
     await testApi.runCheck({ manual: true });
-    assert.strictEqual(prompts.length, 1, 'manual check must still offer the deferred version');
+    assert.strictEqual(prompts.length, 1, 'manual check must still offer the deferred version, got ' + promptSummary());
 
     // Scenario D: an unreachable server stays quiet on background checks.
     process.env.VSIX_UPDATER_API_BASE = 'http://127.0.0.1:9';
     testApi.resetSession();
     prompts.length = 0;
     const result = await testApi.runCheck({ manual: false });
-    assert.strictEqual(prompts.length, 0, 'background errors must not notify');
+    assert.strictEqual(prompts.length, 0, 'background errors must not notify, got ' + promptSummary());
     assert.ok(result.results.every((entry) => entry.status === 'error'), 'expected all sources to fail');
   } finally {
     await fake.close();

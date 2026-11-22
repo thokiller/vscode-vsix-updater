@@ -41,6 +41,11 @@ function activate(context) {
   context.subscriptions.push(statusBar);
 
   function getInstalledVersion(id) {
+    // Our own version is always known; never report the updater as missing
+    // even if the extension registry is momentarily in flux.
+    if (id.toLowerCase() === context.extension.id.toLowerCase()) {
+      return context.extension.packageJSON.version;
+    }
     const extension = vscode.extensions.getExtension(id);
     return extension ? extension.packageJSON.version : undefined;
   }
